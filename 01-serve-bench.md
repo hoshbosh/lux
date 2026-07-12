@@ -17,6 +17,26 @@ Records, per run:
 
 Methodology discipline (non-negotiable): warmup before timing; coordinated-omission-safe load generation (schedule intended send times, don't just loop); full hardware/config/software-version disclosure; one disclosed benchmark host; every number regenerable by a single script.
 
+## Resolved planning decisions (this session)
+
+**Accuracy-delta harness — use a library, don't hand-roll.** The perplexity + task-metric harness is built on `lm-evaluation-harness`, not a bespoke perplexity implementation. Perplexity is easy to get subtly wrong (stride / sliding-window, tokenization), and using the standard tool is *more* credible than a custom one — provided the tool + version + exact task configs are disclosed. This counts as a disclosed library call, not hand-written work.
+
+**Metric measurement is tiered (fixed-batch vs. under-load).** These measure two different things and must not be conflated:
+- *Fixed batch-size* isolates the **engine's raw compute efficiency** (a property of the engine): batch-1 = latency floor, large batch = throughput ceiling, the sweep between = the efficiency curve. Low-variance, needs no CO handling.
+- *Under-load (open-loop, arrival-rate driven)* measures **whole-system serving behavior** (queuing, scheduling, goodput under an SLO). This is the number that maps to real cost-per-token, but it requires CO-safe generation and a server loop the engine may not have.
+
+Decision for the 30h budget:
+- **Tier A (must — the backbone, never sacrificed):** fixed batch-size sweep for every engine/config. Batch-1 latency floor + a sweep to the throughput ceiling, with TTFT/TPOT reported as P50/P90/P99 at each point. This is what nano-infer can be compared on apples-to-apples.
+- **Tier B (build the hook, report one number — first descope candidate):** a minimal CO-safe open-loop load generator (scheduled Poisson arrivals) producing a single headline: **goodput = max sustained QPS under a stated P99 SLO.** Run only against engines with a real server loop (vLLM, llama.cpp server). nano-infer gets a Tier-B number only if/when it grows a batching server; otherwise state plainly it is benchmarked at fixed batch, and why.
+
+**Cost-per-token is reported both ways, with disclosure.** Always report cost-per-million-tokens at *max throughput* AND *at the stated SLO* (from Tier B where available). Never report a lone max-throughput cost number — that is the metric everyone games.
+
+**Apples-to-apples pinning (the real credibility risk).** Any cross-engine comparison must pin and disclose, identically across engines: precision (weights + activations + KV), KV-cache config, sampling params (greedy vs. temperature/top-p), the exact prompt set and output-length policy, and the tokenizer. A comparison that doesn't pin these is where benchmarks quietly lie; the harness records all of them per run.
+
+**Compute host — rent, don't buy (yet).** No usable GPU is owned; dev is on Windows 11; a RunPod instance is available. serve-bench runs on RunPod: cheaper in expectation than a ~$700 used 3090 + host for a one-year project, Linux-native (avoids the Windows/vLLM tax), and a pinned SKU + Docker image makes "one disclosed benchmark host" a reproducibility asset (anyone can rent the identical SKU and re-run the image). Freeze ONE GPU SKU as the disclosed host; use dedicated/secure-cloud for final headline runs, community pods for dev; lock clocks (`nvidia-smi -lgc`) where possible, disclose if not. Revisit buying at the nano-infer boundary (heavy interactive CUDA dev), decided with real GPU-hrs/week from serve-bench.
+
+**Language — Python harness; the rigor lever is not the language.** Python orchestration around any engine (the whole ecosystem — vLLM benchmarks, lm-evaluation-harness — is Python). Timing is captured at the **CUDA-event boundary** (separate prefill/TTFT from decode/TPOT), never Python wall-clock, which leaks tokenizer/serialization overhead. The only defensible non-Python component is the Tier-B open-loop load generator's send-scheduling loop (Rust) — built in Python first and ported only if measurement shows Python GIL/GC jitter is a material fraction of inter-arrival times (unlikely at 1B / single 24GB / low QPS). Off-the-shelf `tokio` only; no hand-authored concurrency primitives (systems-trophy work stays cut).
+
 ## Dig-deeper questions for this session
 1. **Architecture.** What's the cleanest design for a harness that wraps both nano-infer (a from-scratch engine) AND external baselines (llama.cpp, vLLM) behind one measurement interface, so comparisons are apples-to-apples? Language/structure recommendation (Python orchestration around any engine? a thin C++ timing core?) with reasoning.
 2. **TTFT/TPOT measurement correctness.** How to measure these without contaminating them — streaming-token timestamping, separating prefill from decode, avoiding tokenizer/serialization overhead leaking into the numbers. What are the common ways people measure these wrong?
