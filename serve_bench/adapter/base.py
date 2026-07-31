@@ -30,10 +30,11 @@ class RequestResult:
 
 
 class EngineAdapter(abc.ABC):
-    def __init__(self, base_url: str, model: str, tokenizer: Any) -> None:
+    def __init__(self, base_url: str, model: str, tokenizer: Any, uds: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.tokenizer = tokenizer
+        self.uds = uds
 
     @abc.abstractmethod
     async def request(self, prompt: str, config: GenerationConfig) -> RequestResult: ...

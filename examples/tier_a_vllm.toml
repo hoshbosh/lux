@@ -1,0 +1,10 @@
+engine = "vllm"
+base_url = "http://localhost"
+uds = "/tmp/vllm.sock"
+model = "Qwen/Qwen2.5-7B-Instruct"
+tokenizer_name = "Qwen/Qwen2.5-7B-Instruct"
+target_prompt_tokens = 512
+max_tokens = 128
+num_warmup = 5
+num_requests = 20
+gpu_cost_per_hour = 2.49

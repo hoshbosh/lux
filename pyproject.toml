@@ -11,6 +11,9 @@ dependencies = [
     "transformers>=4.40",
 ]
 
+[project.scripts]
+serve-bench = "serve_bench.__main__:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

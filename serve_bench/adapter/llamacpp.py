@@ -10,8 +10,8 @@ from .base import EngineAdapter, GenerationConfig, RequestResult
 
 
 class LlamaCppAdapter(EngineAdapter):
-    def __init__(self, base_url: str, model: str, tokenizer: Any) -> None:
-        super().__init__(base_url, model, tokenizer)
+    def __init__(self, base_url: str, model: str, tokenizer: Any, uds: str | None = None) -> None:
+        super().__init__(base_url, model, tokenizer, uds=uds)
 
     async def request(self, prompt: str, config: GenerationConfig) -> RequestResult:
         body: dict = {
@@ -34,7 +34,8 @@ class LlamaCppAdapter(EngineAdapter):
 
         t_start = time.perf_counter()
         try:
-            async with httpx.AsyncClient() as client:
+            transport = httpx.AsyncHTTPTransport(uds=self.uds) if self.uds else None
+            async with httpx.AsyncClient(transport=transport) as client:
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/v1/chat/completions",
