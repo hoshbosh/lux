@@ -1,19 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from statistics import mean, quantiles
 
 from ..metrics import Metrics
+from ..stats import StatSummary, summarize
 
-
-@dataclass
-class StatSummary:
-    mean_ms: float
-    p50_ms: float
-    p95_ms: float
-    p99_ms: float
-    min_ms: float
-    max_ms: float
+__all__ = ["StatSummary", "AggregateStats", "aggregate"]
 
 
 @dataclass
@@ -25,22 +17,6 @@ class AggregateStats:
     total_completion_tokens: int
     throughput_tok_per_s: float
     cost_per_mtok_usd: float | None
-
-
-def _summarize(values_s: list[float]) -> StatSummary:
-    ms = [v * 1000 for v in values_s]
-    if len(ms) < 2:
-        sole = ms[0]
-        return StatSummary(mean_ms=sole, p50_ms=sole, p95_ms=sole, p99_ms=sole, min_ms=sole, max_ms=sole)
-    qs = quantiles(ms, n=100)
-    return StatSummary(
-        mean_ms=mean(ms),
-        p50_ms=qs[49],
-        p95_ms=qs[94],
-        p99_ms=qs[98],
-        min_ms=min(ms),
-        max_ms=max(ms),
-    )
 
 
 def aggregate(
@@ -62,9 +38,9 @@ def aggregate(
 
     return AggregateStats(
         count=len(metrics),
-        ttft=_summarize([m.ttft for m in metrics]),
-        tpot=_summarize(tpot_values) if tpot_values else None,
-        e2e=_summarize([m.e2e for m in metrics]),
+        ttft=summarize([m.ttft for m in metrics]),
+        tpot=summarize(tpot_values) if tpot_values else None,
+        e2e=summarize([m.e2e for m in metrics]),
         total_completion_tokens=total_tokens,
         throughput_tok_per_s=total_tokens / wall_time_s if wall_time_s > 0 else 0.0,
         cost_per_mtok_usd=cost,
