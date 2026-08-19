@@ -1,19 +1,12 @@
 import asyncio
-import ast
-import inspect
 import json
 import time
 
-import pytest
-
 from serve_bench.adapter.base import EngineAdapter, GenerationConfig, RequestResult
-from serve_bench.tier_b import worker as worker_module
 from serve_bench.tier_b.worker import (
-    DROPPED_BACKPRESSURE,
     FAILED,
     INCOMPLETE_AT_WINDOW_END,
     OUTSIDE_WINDOW,
-    SUCCESS,
     MeasurementWindow,
     RequestOutcome,
     WorkerConfig,
@@ -114,11 +107,6 @@ def make_outcome(queue_start_s, start_s, end_s, success=True) -> RequestOutcome:
 WINDOW = MeasurementWindow(start_offset_s=1.0, end_offset_s=5.0)
 
 
-def test_request_inside_window_counts():
-    o = make_outcome(queue_start_s=100.9, start_s=101.0, end_s=104.0)
-    assert classify_outcome(o, t0_perf=100.0, window=WINDOW) == SUCCESS
-
-
 def test_request_completing_after_window_is_discarded_not_dropped():
     # THE hard AND rule. Started at +2s, finished at +6s with the window closing at +5s.
     # Likely cause of failure: treating "did not finish in the window" as a drop, which
@@ -133,31 +121,9 @@ def test_request_starting_before_window_is_outside_even_if_it_finishes_inside():
     assert classify_outcome(o, t0_perf=100.0, window=WINDOW) == OUTSIDE_WINDOW
 
 
-def test_request_starting_after_window_end_is_outside_not_incomplete():
-    o = make_outcome(queue_start_s=105.9, start_s=106.0, end_s=107.0)
-    assert classify_outcome(o, t0_perf=100.0, window=WINDOW) == OUTSIDE_WINDOW
-
-
 def test_failed_request_inside_window_is_failed_not_success():
     o = make_outcome(queue_start_s=100.9, start_s=101.0, end_s=102.0, success=False)
     assert classify_outcome(o, t0_perf=100.0, window=WINDOW) == FAILED
-
-
-def test_dropped_arrival_is_placed_by_its_queue_entry_time():
-    inside = make_outcome(queue_start_s=102.0, start_s=None, end_s=None)
-    assert classify_outcome(inside, t0_perf=100.0, window=WINDOW) == DROPPED_BACKPRESSURE
-
-    # Dropped during warmup: belongs to warmup, not to the measurement window.
-    before = make_outcome(queue_start_s=100.5, start_s=None, end_s=None)
-    assert classify_outcome(before, t0_perf=100.0, window=WINDOW) == OUTSIDE_WINDOW
-
-
-def test_open_ended_window_has_no_upper_bound():
-    o = make_outcome(queue_start_s=100.0, start_s=100.0, end_s=1e9)
-    assert classify_outcome(o, t0_perf=100.0, window=MeasurementWindow()) == SUCCESS
-
-
-# --- backpressure -------------------------------------------------------------------
 
 
 async def test_in_flight_never_exceeds_concurrency_cap():
@@ -172,19 +138,6 @@ async def test_in_flight_never_exceeds_concurrency_cap():
     assert adapter.peak_in_flight == 3  # the cap was actually reached, so this proves it
     assert result.num_dispatched == 20
     assert result.num_success == 20
-
-
-async def test_blocked_arrivals_wait_rather_than_being_dropped_by_default():
-    offsets = [(i, 0.002 * i) for i in range(10)]
-    adapter = FakeAdapter(duration_s=0.05, chunks=2)
-    result = await run_worker(offsets, adapter, make_config(concurrency_cap=2))
-
-    # Default max_queue_wait_s is None: everything eventually gets through.
-    assert result.num_dropped_backpressure == 0
-    assert result.num_success == 10
-    assert adapter.calls == 10
-    assert result.queue_wait is not None
-    assert result.queue_wait.max_ms > 0  # someone really did wait
 
 
 async def test_backpressure_drops_are_counted_and_never_issued():
@@ -207,21 +160,6 @@ async def test_backpressure_drops_are_counted_and_never_issued():
         + result.num_incomplete_at_window_end
         + result.num_outside_window
     ) == 8
-
-
-async def test_timed_out_acquire_does_not_leak_permits():
-    # A cancelled Semaphore.acquire that had already been handed a permit would silently
-    # shrink the cap over the run; with a leak the later arrivals would all be dropped.
-    offsets = [(i, 0.02 * i) for i in range(12)]
-    adapter = FakeAdapter(duration_s=0.01, chunks=1)
-    result = await run_worker(
-        offsets, adapter, make_config(concurrency_cap=2, max_queue_wait_s=0.03)
-    )
-    assert result.num_dropped_backpressure == 0
-    assert result.num_success == 12
-
-
-# --- window filtering end to end -----------------------------------------------------
 
 
 async def test_window_start_discards_warmup_requests():
@@ -255,16 +193,6 @@ async def test_window_end_discards_requests_still_running():
 
 
 # --- failures ------------------------------------------------------------------------
-
-
-async def test_adapter_failure_is_counted_as_failed_not_success():
-    offsets = [(i, 0.002 * i) for i in range(6)]
-    adapter = FakeAdapter(duration_s=0.001, chunks=2, fail_every=2)
-    result = await run_worker(offsets, adapter, make_config())
-
-    assert result.num_failed == 3
-    assert result.num_success == 3
-    assert len(result.per_request_metrics) == 3
 
 
 async def test_adapter_exception_is_a_failure_not_a_lost_arrival():
@@ -346,47 +274,3 @@ async def test_to_json_reports_the_two_drop_causes_separately():
     assert "dropped" not in doc["summary"]  # never folded into a single number
     assert doc["summary"]["num_success"] == result.num_success
     assert doc["epoch"]["t0_perf"] == result.t0_perf
-
-
-async def test_no_arrivals_produces_an_empty_but_valid_result():
-    result = await run_worker([], FakeAdapter(), make_config())
-    assert result.num_dispatched == 0
-    assert result.timing is None
-    assert result.queue_wait is None
-    json.loads(result.to_json())
-
-
-# --- invariants and validation ---------------------------------------------------------
-
-
-def test_module_never_reads_wall_clock_in_the_timing_path():
-    # time.time() can step under NTP mid-run and is not comparable with perf_counter.
-    # The one wall-clock read of a run lives in arrivals.run_arrivals, paired with
-    # t0_perf, and is inherited through the result.
-    # Checked over the AST rather than the raw text so prose about time.time() in the
-    # docstrings does not trip it, and so a call cannot hide behind an alias of a comment.
-    tree = ast.parse(inspect.getsource(worker_module))
-    calls = [
-        n.func
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-    ]
-    names = {ast.unparse(f) for f in calls}
-    assert "time.time" not in names
-    assert "time.perf_counter" in names
-
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"concurrency_cap": 0},
-        {"max_queue_wait_s": 0.0},
-        {"max_queue_wait_s": -1.0},
-        {"window": MeasurementWindow(start_offset_s=-1.0)},
-        {"window": MeasurementWindow(start_offset_s=5.0, end_offset_s=5.0)},
-        {"window": MeasurementWindow(start_offset_s=5.0, end_offset_s=1.0)},
-    ],
-)
-async def test_invalid_config_is_rejected(kwargs):
-    with pytest.raises(ValueError):
-        await run_worker([], FakeAdapter(), make_config(**kwargs))

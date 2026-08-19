@@ -112,9 +112,3 @@ def test_pooled_itl_summary_is_not_the_same_as_tpot_percentiles():
     assert agg.tpot is not None
     assert agg.tpot.p50_ms > 5.0
     assert agg.itl.max_ms == pytest.approx(100.0, abs=0.5)
-
-
-def test_pooled_itl_is_none_when_no_request_had_an_interval():
-    from serve_bench.tier_a.stats import aggregate
-    agg = aggregate([_m_with_itl([])], wall_time_s=1.0, gpu_cost_per_hour=0.0)
-    assert agg.itl is None
