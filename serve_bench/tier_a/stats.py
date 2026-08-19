@@ -14,6 +14,12 @@ class AggregateStats:
     ttft: StatSummary
     tpot: StatSummary | None
     e2e: StatSummary
+    # Percentiles over POOLED ITL samples from every request, not over per-request
+    # aggregates. `tpot` is a per-request MEAN of itl[1:], so `tpot.p50_ms` is a
+    # median-of-means and is a different number from `itl.p50_ms`. Tier B's smooth
+    # goodput thresholds individual chunk intervals, so the pooled median is the correct
+    # baseline and the two must not be substituted for one another.
+    itl: StatSummary | None
     total_completion_tokens: int
     throughput_tok_per_s: float
     cost_per_mtok_usd: float | None
@@ -29,6 +35,7 @@ def aggregate(
 
     tpot_values = [m.tpot for m in metrics if m.tpot is not None]
     total_tokens = sum(m.completion_tokens for m in metrics)
+    pooled_itl = [v for m in metrics for v in m.itl]
 
     cost: float | None = None
     if gpu_cost_per_hour > 0 and total_tokens > 0:
@@ -41,6 +48,9 @@ def aggregate(
         ttft=summarize([m.ttft for m in metrics]),
         tpot=summarize(tpot_values) if tpot_values else None,
         e2e=summarize([m.e2e for m in metrics]),
+        # None, not an empty summary: no request produced two chunks, so no interval was
+        # ever observed. Same convention as `tpot`.
+        itl=summarize(pooled_itl) if pooled_itl else None,
         total_completion_tokens=total_tokens,
         throughput_tok_per_s=total_tokens / wall_time_s if wall_time_s > 0 else 0.0,
         cost_per_mtok_usd=cost,

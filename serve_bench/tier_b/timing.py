@@ -9,7 +9,9 @@ from ..stats import StatSummary, summarize
 if TYPE_CHECKING:  # avoids a runtime import cycle with arrivals.py
     from .arrivals import Arrival
 
-_ZERO = StatSummary(mean_ms=0.0, p50_ms=0.0, p95_ms=0.0, p99_ms=0.0, min_ms=0.0, max_ms=0.0)
+_ZERO = StatSummary(
+    mean_ms=0.0, p50_ms=0.0, p90_ms=0.0, p95_ms=0.0, p99_ms=0.0, min_ms=0.0, max_ms=0.0
+)
 
 
 @dataclass

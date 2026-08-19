@@ -104,6 +104,7 @@ class CalibrationResult:
             return {
                 "mean_ms": s.mean_ms,
                 "p50_ms": s.p50_ms,
+                "p90_ms": s.p90_ms,
                 "p95_ms": s.p95_ms,
                 "p99_ms": s.p99_ms,
                 "min_ms": s.min_ms,

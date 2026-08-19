@@ -88,3 +88,33 @@ def test_aggregate_all_none_tpot():
 def test_aggregate_empty_raises():
     with pytest.raises(ValueError):
         aggregate([], wall_time_s=1.0, gpu_cost_per_hour=0.0)
+
+
+def _m_with_itl(itl_ms: list[float]):
+    from serve_bench.metrics import Metrics
+    from statistics import mean as _mean
+    itl = [v / 1000 for v in itl_ms]
+    return Metrics(ttft=0.05, tpot=_mean(itl[1:]) if len(itl) >= 2 else None,
+                   e2e=0.05 + sum(itl), itl=itl, prompt_tokens=10,
+                   completion_tokens=len(itl) + 1, token_count_warning=False)
+
+
+def test_pooled_itl_summary_is_not_the_same_as_tpot_percentiles():
+    """TPOT is a per-request MEAN of itl[1:], so its p50 is a median-of-means. Smooth
+    goodput thresholds individual intervals, so it needs the pooled median instead."""
+    from serve_bench.tier_a.stats import aggregate
+    # Every request: nine 1ms intervals and one 100ms stall. Pooled median is 1ms;
+    # each request's TPOT mean is ~12ms.
+    metrics = [_m_with_itl([1.0] * 9 + [100.0]) for _ in range(10)]
+    agg = aggregate(metrics, wall_time_s=10.0, gpu_cost_per_hour=0.0)
+    assert agg.itl is not None
+    assert agg.itl.p50_ms == pytest.approx(1.0, abs=0.5)
+    assert agg.tpot is not None
+    assert agg.tpot.p50_ms > 5.0
+    assert agg.itl.max_ms == pytest.approx(100.0, abs=0.5)
+
+
+def test_pooled_itl_is_none_when_no_request_had_an_interval():
+    from serve_bench.tier_a.stats import aggregate
+    agg = aggregate([_m_with_itl([])], wall_time_s=1.0, gpu_cost_per_hour=0.0)
+    assert agg.itl is None

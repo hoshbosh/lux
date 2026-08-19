@@ -1,0 +1,28 @@
+engine = "vllm"
+base_url = "http://localhost"
+uds = "/tmp/vllm.sock"
+model = "Qwen/Qwen2.5-7B-Instruct"
+tokenizer_name = "Qwen/Qwen2.5-7B-Instruct"
+target_prompt_tokens = 512
+max_tokens = 128
+
+# Offered load. Poisson arrivals, not a fixed-rate loop.
+qps = 20.0
+duration_s = 120.0
+seed = 0
+
+# Load generator shape. concurrency_cap is DERIVED from target_concurrency via
+# cap_for_target() and is deliberately not settable here.
+num_workers = 4
+target_concurrency = 128
+
+# SLOs. itl_slo_ms is left unset so the threshold is derived from the Tier A run passed
+# via --tier-a-result: pooled median ITL x itl_baseline_multiple.
+ttft_slo_ms = 500.0
+itl_baseline_multiple = 2.0
+
+# Warmup gate. vLLM's JIT and CUDA-graph capture live inside this window.
+warmup_window_s = 10.0
+warmup_hard_cutoff_s = 120.0
+
+gpu_cost_per_hour = 2.49

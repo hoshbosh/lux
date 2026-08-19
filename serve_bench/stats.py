@@ -8,6 +8,7 @@ from statistics import mean, quantiles
 class StatSummary:
     mean_ms: float
     p50_ms: float
+    p90_ms: float
     p95_ms: float
     p99_ms: float
     min_ms: float
@@ -27,7 +28,10 @@ def summarize(values_s: list[float]) -> StatSummary:
     if len(ms) < 2:
         # statistics.quantiles requires at least 2 data points.
         sole = ms[0]
-        return StatSummary(mean_ms=sole, p50_ms=sole, p95_ms=sole, p99_ms=sole, min_ms=sole, max_ms=sole)
+        return StatSummary(
+            mean_ms=sole, p50_ms=sole, p90_ms=sole, p95_ms=sole,
+            p99_ms=sole, min_ms=sole, max_ms=sole,
+        )
     # method="inclusive", NOT the "exclusive" default. The default treats the sample as
     # drawn from a larger population and extrapolates past both ends, so it can report a
     # p99 ABOVE the largest value actually observed — with 20 samples of range(1, 21) it
@@ -38,6 +42,9 @@ def summarize(values_s: list[float]) -> StatSummary:
     return StatSummary(
         mean_ms=mean(ms),
         p50_ms=qs[49],
+        # p90 is what 01-serve-bench.md actually specifies (P50/P90/P99); p95 predates
+        # that and is kept so existing results stay comparable.
+        p90_ms=qs[89],
         p95_ms=qs[94],
         p99_ms=qs[98],
         min_ms=min(ms),

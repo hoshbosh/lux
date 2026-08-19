@@ -16,6 +16,13 @@ def main() -> None:
     ta.add_argument("config", type=Path, help="Path to TOML config file")
     ta.add_argument("--out", type=Path, default=None, help="Output JSON path (default: next to config)")
 
+    tb = sub.add_parser("run-tier-b", help="Run Tier B open-loop load and score smooth goodput")
+    tb.add_argument("config", type=Path, help="Path to TOML config file")
+    tb.add_argument("--tier-a-result", type=Path, default=None,
+                    help="Tier A result JSON; its pooled median ITL sets the goodput ITL "
+                         "threshold unless itl_slo_ms is set in the config")
+    tb.add_argument("--out", type=Path, default=None, help="Output JSON path (default: next to config)")
+
     cb = sub.add_parser(
         "calibrate-tier-b",
         help="Sweep a single worker to find its concurrency ceiling (the B2 experiment)",
@@ -33,6 +40,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "run-tier-a":
         _cmd_run_tier_a(args)
+    elif args.command == "run-tier-b":
+        _cmd_run_tier_b(args)
     elif args.command == "calibrate-tier-b":
         _cmd_calibrate_tier_b(args)
     else:
@@ -50,6 +59,71 @@ def _cmd_run_tier_a(args: argparse.Namespace) -> None:
     out_path.write_text(result.to_json())
     print(f"\nResults written to {out_path}")
     _print_summary(result)
+
+
+def _cmd_run_tier_b(args: argparse.Namespace) -> None:
+    from .tier_b.config import TierBConfig
+    from .tier_b.runner import run_tier_b
+
+    config = TierBConfig.from_toml(args.config)
+    result = run_tier_b(config, args.tier_a_result)
+
+    out_path: Path = args.out or args.config.parent / f"{result.run_at}_tier_b.json"
+    out_path.write_text(result.to_json())
+    print(f"\nResults written to {out_path}")
+    _print_tier_b_summary(result)
+
+
+def _print_tier_b_summary(result) -> None:
+    load, g = result.load, result.goodput
+    print(f"\n{'=' * 72}")
+    print(f"Tier B  |  {result.config.engine}  |  {result.config.model}")
+    print(f"{'=' * 72}")
+    print(f"Offered  : {result.config.qps:.1f} QPS for {result.config.duration_s:.0f}s "
+          f"across {load.num_workers} workers (cap {result.concurrency_cap} each)")
+    print(f"Requests : {load.num_success} ok, {load.num_failed} failed, "
+          f"{load.num_dropped_backpressure} backpressure-dropped")
+    if load.num_incomplete_at_window_end:
+        print(f"           {load.num_incomplete_at_window_end} censored at window end (discarded)")
+
+    if load.warmup.converged:
+        print(f"Warmup   : steady state at {load.warmup.steady_state_offset_s:.1f}s, "
+              f"measured over {load.in_window_span_s:.1f}s")
+    else:
+        print(f"Warmup   : DID NOT CONVERGE — measured from the {load.warmup.steady_state_offset_s:.0f}s "
+              f"cutoff. Results may not reflect steady state.")
+    if load.worker_skew_s > 0.25:
+        print(f"           WARNING worker start skew {load.worker_skew_s * 1000:.0f}ms")
+    print()
+
+    print(f"{'Metric':<12} {'P50':>8} {'P90':>8} {'P99':>8} {'Mean':>8}")
+    print(f"{'-'*12} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
+    for label, s in [("TTFT (ms)", load.ttft), ("E2E (ms)", load.e2e), ("TPOT (ms)", load.tpot)]:
+        if s:
+            print(f"{label:<12} {s.p50_ms:>8.1f} {s.p90_ms:>8.1f} {s.p99_ms:>8.1f} {s.mean_ms:>8.1f}")
+    print()
+
+    print(f"Throughput    : {load.achieved_qps_in_window:.1f} QPS completed")
+    print(f"Smooth goodput: {g.goodput_qps:.1f} QPS  "
+          f"({g.goodput_fraction * 100:.1f}% of {g.denominator} accounted arrivals)")
+    print(f"SLO           : TTFT <= {g.slo.ttft_ms:.0f}ms, ITL <= {g.slo.itl_ms:.1f}ms at EVERY chunk")
+    print(f"                [{g.slo.itl_source}]")
+    print(f"Missed SLO    : {g.num_dropped_slo} ({g.num_slo_fail_ttft} TTFT, "
+          f"{g.num_slo_fail_itl} ITL, {g.num_slo_fail_both} both)")
+    if g.num_no_itl_evidence:
+        print(f"                {g.num_no_itl_evidence} single-chunk responses could not be checked")
+    if result.cost_per_mtok_at_throughput is not None:
+        print()
+        print(f"Cost at max throughput: ${result.cost_per_mtok_at_throughput:.4f}/MTok")
+        if result.cost_per_mtok_at_slo is not None:
+            print(f"Cost at SLO           : ${result.cost_per_mtok_at_slo:.4f}/MTok")
+        else:
+            print("Cost at SLO           : undefined — no request met the SLO")
+    print()
+    print("NOTE: goodput counts a request only if it completed, met TTFT, and stayed "
+          "under the")
+    print("ITL ceiling at every chunk. Backpressure drops are in the denominator, never "
+          "hidden.")
 
 
 def _cmd_calibrate_tier_b(args: argparse.Namespace) -> None:
