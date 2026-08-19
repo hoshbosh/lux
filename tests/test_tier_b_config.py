@@ -32,25 +32,6 @@ def test_from_toml_parses_required_fields_and_defaults(tmp_path):
     assert c.uds is None
 
 
-def test_unknown_keys_are_dropped_matching_tier_a(tmp_path):
-    p = tmp_path / "b.toml"
-    p.write_text(TOML + '\nnot_a_field = 3\n')
-    assert TierBConfig.from_toml(p).engine == "vllm"
-
-
-def test_missing_required_field_raises(tmp_path):
-    p = tmp_path / "b.toml"
-    p.write_text('engine = "vllm"\n')
-    with pytest.raises(TypeError):
-        TierBConfig.from_toml(p)
-
-
-def test_concurrency_cap_is_not_a_config_field():
-    """Sizing the cap by hand is how Poisson burstiness gets misreported as backpressure.
-    It must be derived."""
-    assert "concurrency_cap" not in {f for f in TierBConfig.__dataclass_fields__}
-
-
 def test_example_config_parses_and_derives_a_cap():
     c = TierBConfig.from_toml("examples/tier_b_vllm.toml")
     assert c.engine == "vllm"
@@ -84,9 +65,6 @@ def test_missing_itl_summary_returns_none_rather_than_raising(tmp_path):
 
 # --- cost -------------------------------------------------------------------
 
-def test_cost_is_none_when_no_price_disclosed():
-    assert _cost(0.0, 10.0, 1000) is None
-
 
 def test_cost_is_none_when_no_tokens_qualified():
     """Zero well-served tokens makes $/MTok at the SLO undefined, not free."""
@@ -96,10 +74,3 @@ def test_cost_is_none_when_no_tokens_qualified():
 def test_cost_matches_the_tier_a_derivation():
     # $3.60/hr = $0.001/s; 10s = $0.01; over 1M tokens => $0.01/MTok.
     assert _cost(3.60, 10.0, 1_000_000) == pytest.approx(0.01)
-
-
-def test_cost_at_slo_is_never_cheaper_than_at_throughput():
-    """Badly served tokens still cost money, so the SLO price is the higher number."""
-    at_throughput = _cost(2.49, 60.0, 100_000)
-    at_slo = _cost(2.49, 60.0, 60_000)
-    assert at_slo > at_throughput

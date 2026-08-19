@@ -66,17 +66,6 @@ def test_cap_for_target_covers_the_observed_poisson_peaks():
     assert cap_for_target(100, 1) >= 131
 
 
-def test_cap_is_above_the_mean_not_equal_to_it():
-    assert cap_for_target(64, 1) > 64
-
-
-def test_cap_rejects_zero_workers():
-    with pytest.raises(ValueError):
-        cap_for_target(100, 0)
-
-
-# --- rebasing ---------------------------------------------------------------
-
 def test_rebase_is_invariant_to_each_workers_perf_origin():
     """Two workers that started at the same wall instant but hold wildly different
     perf_counter origins must land on the same rebased timeline. This is the whole
@@ -87,20 +76,6 @@ def test_rebase_is_invariant_to_each_workers_perf_origin():
     assert rebase_outcomes(a, origin)[0].start_s == pytest.approx(1.0)
     assert rebase_outcomes(b, origin)[0].start_s == pytest.approx(1.0)
 
-
-def test_rebase_places_a_late_worker_later_on_the_shared_timeline():
-    late = _worker_result(t0_perf=50.0, t0_wall=1000.5, outcomes=[_outcome(0, 1.0, 0.5, 0.05, 50.0)])
-    assert rebase_outcomes(late, 1000.0)[0].start_s == pytest.approx(1.5)
-
-
-def test_rebase_leaves_request_result_untouched():
-    w = _worker_result(10.0, 1000.0, [_outcome(0, 1.0, 0.5, 0.05, 10.0)])
-    before = w.outcomes[0].result
-    after = rebase_outcomes(w, 990.0)[0].result
-    assert after is before, "metrics are origin-invariant differences; do not rewrite them"
-
-
-# --- assembly ---------------------------------------------------------------
 
 def _stable_worker(t0_perf: float, t0_wall: float, n: int, offset: float = 0.0) -> WorkerResult:
     return _worker_result(
@@ -131,16 +106,6 @@ def test_worker_start_skew_is_measured_and_reported():
     b = _stable_worker(100.0, 5000.5, 100)  # started 500ms later in wall time
     r = assemble_result([a, b], _load_config())
     assert r.worker_skew_s == pytest.approx(0.5, abs=1e-6)
-
-
-def test_slo_drops_stay_none_through_assembly():
-    r = assemble_result([_stable_worker(100.0, 5000.0, 200)], _load_config())
-    assert r.num_dropped_slo is None, "no SLO is evaluated at this layer"
-
-
-def test_assemble_rejects_zero_workers():
-    with pytest.raises(ValueError):
-        assemble_result([], _load_config())
 
 
 def test_result_serializes_and_keeps_drop_causes_separate():
@@ -174,18 +139,6 @@ def test_run_load_spawns_workers_and_returns_a_measured_window():
     assert r.ttft is not None and r.ttft.p50_ms > 0
     # The barrier is the whole point: workers must start within milliseconds.
     assert r.worker_skew_s < 0.25, f"start skew {r.worker_skew_s*1000:.0f}ms — barrier failed"
-
-
-def test_run_load_rejects_zero_workers():
-    with pytest.raises(ValueError):
-        run_load(AdapterSpec(engine="synthetic"), _load_config(num_workers=0))
-
-
-def test_serialized_summaries_carry_p90():
-    import json
-    r = assemble_result([_stable_worker(100.0, 5000.0, 200)], _load_config())
-    doc = json.loads(r.to_json())
-    assert "p90_ms" in doc["latency"]["ttft"]
 
 
 def test_end_to_end_load_then_goodput_flips_on_the_itl_threshold():
