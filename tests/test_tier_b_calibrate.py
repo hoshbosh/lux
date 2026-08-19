@@ -16,7 +16,8 @@ from serve_bench.tier_b.timing import ArrivalTimingStats
 
 def make_point(concurrency: int, passed: bool, p99_ms: float = 0.0) -> CalibrationPoint:
     summary = StatSummary(
-        mean_ms=p99_ms, p50_ms=p99_ms, p95_ms=p99_ms, p99_ms=p99_ms, min_ms=0.0, max_ms=p99_ms
+        mean_ms=p99_ms, p50_ms=p99_ms, p90_ms=p99_ms, p95_ms=p99_ms, p99_ms=p99_ms,
+        min_ms=0.0, max_ms=p99_ms
     )
     return CalibrationPoint(
         target_concurrency=concurrency,

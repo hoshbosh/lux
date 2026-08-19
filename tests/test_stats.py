@@ -61,3 +61,15 @@ def test_single_value_returns_that_value_for_every_percentile():
 def test_empty_raises():
     with pytest.raises(ValueError, match="zero values"):
         summarize([])
+
+
+def test_p90_is_ordered_between_p50_and_p95():
+    from serve_bench.stats import summarize
+    s = summarize([v / 1000 for v in range(1, 101)])
+    assert s.min_ms <= s.p50_ms <= s.p90_ms <= s.p95_ms <= s.p99_ms <= s.max_ms
+
+
+def test_p90_value():
+    from serve_bench.stats import summarize
+    s = summarize([v / 1000 for v in range(1, 101)])
+    assert s.p90_ms == pytest.approx(90.1, abs=1.0)
