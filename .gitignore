@@ -1,2 +1,17 @@
 __pycache__/
 *.pyc
+
+# Private keys must never enter this repo — it is intended to be public.
+id_ed25519
+id_rsa
+id_ecdsa
+*.pem
+*.key
+
+# Benchmark results: large (every per-request metric) and host-specific.
+tier_a.json
+tier_b.json
+*_tier_a.json
+*_tier_b.json
+tier_b_calibration.json
+runs/

@@ -140,3 +140,47 @@ def test_dropped_slo_counts_no_itl_evidence_that_the_failure_counters_miss():
     # Summing the failure counters would give 0 here and undercount by 3.
     assert r.num_slo_fail_ttft + r.num_slo_fail_itl == 0
     assert r.num_dropped_slo == 3
+
+
+def test_rescoring_a_saved_run_matches_scoring_it_live(tmp_path):
+    """The saved-result path must go through the same compute_goodput as the live path,
+    so a swept number and a measured number are comparable."""
+    import json as _json
+
+    from serve_bench.tier_b.runner import rescore_goodput
+
+    metrics = [_m(50.0, [10.0] * 20) for _ in range(30)] + [_m(50.0, [10.0] * 19 + [400.0]) for _ in range(10)]
+    cfg = GoodputConfig(ttft_slo_ms=200.0, itl_slo_ms=50.0)
+    live = compute_goodput(metrics, num_failed=2, num_dropped_backpressure=3, span_s=10.0, config=cfg)
+
+    doc = {
+        "load": {
+            "summary": {"num_failed": 2, "in_window_span_s": 10.0},
+            "dropped": {"backpressure": 3},
+            "per_request": [
+                {"ttft_ms": m.ttft * 1000, "tpot_ms": m.tpot * 1000 if m.tpot else None,
+                 "e2e_ms": m.e2e * 1000, "itl_ms": [v * 1000 for v in m.itl],
+                 "prompt_tokens": m.prompt_tokens, "completion_tokens": m.completion_tokens,
+                 "token_count_warning": m.token_count_warning}
+                for m in metrics
+            ],
+        }
+    }
+    path = tmp_path / "b.json"
+    path.write_text(_json.dumps(doc))
+
+    again = rescore_goodput(path, cfg)
+    assert again.num_goodput_ok == live.num_goodput_ok == 30
+    assert again.denominator == live.denominator == 45
+    assert again.goodput_fraction == pytest.approx(live.goodput_fraction)
+
+
+def test_rescoring_a_pre_per_request_result_says_so(tmp_path):
+    import json as _json
+
+    from serve_bench.tier_b.runner import rescore_goodput
+
+    path = tmp_path / "old.json"
+    path.write_text(_json.dumps({"load": {"summary": {}, "dropped": {}}}))
+    with pytest.raises(ValueError, match="per_request"):
+        rescore_goodput(path, GoodputConfig(ttft_slo_ms=200.0, itl_slo_ms=50.0))

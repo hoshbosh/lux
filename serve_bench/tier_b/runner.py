@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..adapter.base import GenerationConfig
+from ..metrics import Metrics
 from ..stats import StatSummary
 from ..tier_a.prompt import build_prompt
 from .config import TierBConfig
@@ -27,7 +28,16 @@ logger = logging.getLogger(__name__)
 
 
 def baseline_itl_ms_from_tier_a(path: str | Path) -> float | None:
-    """Pull the pooled median ITL out of a Tier A result JSON.
+    """Pull the pooled p99 ITL out of a Tier A result JSON.
+
+    **p99, not the median — this was corrected after the first real vLLM run.** Smooth
+    goodput tests the MAXIMUM interval across a whole response, so a 128-token request
+    puts 127 draws against the threshold and passes only if every one clears it. Setting
+    the bar from the median ignores that structure entirely. On the first real run the
+    median-derived threshold (24.8ms x 2 = 49.5ms) sat *below* Tier A's own worst
+    observed interval of 55.2ms, so even the unloaded engine failed the gate on 4 of 20
+    requests, and the loaded run scored 1 of 392. A tail statistic is the right input for
+    a tail test.
 
     Returns None (with a warning) rather than raising when the field is absent: result
     files written before Tier A grew an ITL summary are still valid Tier A runs, and the
@@ -36,13 +46,59 @@ def baseline_itl_ms_from_tier_a(path: str | Path) -> float | None:
     """
     doc = json.loads(Path(path).read_text())
     itl = doc.get("aggregate", {}).get("itl")
-    if not itl or itl.get("p50_ms") is None:
+    if not itl or itl.get("p99_ms") is None:
         logger.warning(
-            "Tier A result %s has no aggregate.itl.p50_ms — it predates the pooled ITL "
+            "Tier A result %s has no aggregate.itl.p99_ms — it predates the pooled ITL "
             "summary, or no request in it produced two chunks. No baseline derived.", path
         )
         return None
-    return float(itl["p50_ms"])
+    return float(itl["p99_ms"])
+
+
+def _metrics_from_result(doc: dict) -> list[Metrics]:
+    per_request = doc.get("load", {}).get("per_request")
+    if per_request is None:
+        raise ValueError(
+            "This result has no per_request block, so it cannot be re-scored — it was "
+            "written before per-request metrics were persisted. Re-run to get a "
+            "re-scorable result."
+        )
+    return [
+        Metrics(
+            ttft=r["ttft_ms"] / 1000,
+            tpot=r["tpot_ms"] / 1000 if r.get("tpot_ms") is not None else None,
+            e2e=r["e2e_ms"] / 1000,
+            itl=[v / 1000 for v in r["itl_ms"]],
+            prompt_tokens=r["prompt_tokens"],
+            completion_tokens=r["completion_tokens"],
+            token_count_warning=r["token_count_warning"],
+        )
+        for r in per_request
+    ]
+
+
+def rescore_goodput(
+    path: str | Path, config: GoodputConfig, baseline_itl_ms: float | None = None
+) -> GoodputResult:
+    """Re-score a saved Tier B run at a different SLO, without touching a GPU.
+
+    The ITL threshold is a tuning knob, and re-running a benchmark to move a knob is the
+    expensive way to do it. Everything goodput needs — per-chunk ITL, the failure count,
+    the backpressure drops, the measurement span — is already in the result file, so the
+    same `compute_goodput` that scored the live run scores the saved one. Identical code
+    path, so a swept number and a live number are directly comparable.
+    """
+    doc = json.loads(Path(path).read_text())
+    load = doc.get("load", {})
+    summary = load.get("summary", {})
+    return compute_goodput(
+        metrics=_metrics_from_result(doc),
+        num_failed=summary.get("num_failed", 0),
+        num_dropped_backpressure=load.get("dropped", {}).get("backpressure", 0),
+        span_s=summary.get("in_window_span_s", 0.0),
+        config=config,
+        baseline_itl_ms=baseline_itl_ms,
+    )
 
 
 @dataclass

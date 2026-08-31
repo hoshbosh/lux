@@ -23,6 +23,15 @@ def main() -> None:
                          "threshold unless itl_slo_ms is set in the config")
     tb.add_argument("--out", type=Path, default=None, help="Output JSON path (default: next to config)")
 
+    sg = sub.add_parser("score-goodput",
+                        help="Re-score a saved Tier B result at a different SLO (no GPU needed)")
+    sg.add_argument("result", type=Path, help="Path to a Tier B result JSON")
+    sg.add_argument("--ttft-slo-ms", type=float, default=None,
+                    help="Default: the TTFT SLO recorded in the result")
+    sg.add_argument("--itl-slo-ms", type=float, default=None, help="Explicit ITL ceiling")
+    sg.add_argument("--sweep", type=str, default=None,
+                    help="Comma-separated ITL ceilings in ms; prints goodput at each")
+
     cb = sub.add_parser(
         "calibrate-tier-b",
         help="Sweep a single worker to find its concurrency ceiling (the B2 experiment)",
@@ -42,6 +51,8 @@ def main() -> None:
         _cmd_run_tier_a(args)
     elif args.command == "run-tier-b":
         _cmd_run_tier_b(args)
+    elif args.command == "score-goodput":
+        _cmd_score_goodput(args)
     elif args.command == "calibrate-tier-b":
         _cmd_calibrate_tier_b(args)
     else:
@@ -124,6 +135,50 @@ def _print_tier_b_summary(result) -> None:
           "under the")
     print("ITL ceiling at every chunk. Backpressure drops are in the denominator, never "
           "hidden.")
+
+
+def _cmd_score_goodput(args: argparse.Namespace) -> None:
+    import json as _json
+
+    from .tier_b.goodput import GoodputConfig
+    from .tier_b.runner import rescore_goodput
+
+    doc = _json.loads(args.result.read_text())
+    recorded = doc.get("goodput", {}).get("slo", {})
+    ttft_slo = args.ttft_slo_ms if args.ttft_slo_ms is not None else recorded.get("ttft_ms")
+    if ttft_slo is None:
+        print("No TTFT SLO in the result; pass --ttft-slo-ms.", file=sys.stderr)
+        sys.exit(1)
+
+    thresholds = (
+        [float(x) for x in args.sweep.split(",") if x.strip()]
+        if args.sweep
+        else [args.itl_slo_ms if args.itl_slo_ms is not None else recorded.get("itl_ms")]
+    )
+    if thresholds[0] is None:
+        print("No ITL SLO available; pass --itl-slo-ms or --sweep.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\n{'=' * 72}")
+    print(f"Re-scoring {args.result}  |  TTFT SLO {ttft_slo:.0f}ms")
+    print(f"{'=' * 72}")
+    print(f"Originally scored at ITL <= {recorded.get('itl_ms', float('nan')):.1f}ms "
+          f"[{recorded.get('itl_source', 'unknown')}]")
+    print()
+    print(f"{'ITL <= ms':>10} {'goodput QPS':>12} {'fraction':>10} {'ok':>7} {'fail ITL':>9} {'fail TTFT':>10}")
+    print(f"{'-'*10} {'-'*12} {'-'*10} {'-'*7} {'-'*9} {'-'*10}")
+    for t in thresholds:
+        try:
+            r = rescore_goodput(args.result, GoodputConfig(ttft_slo_ms=ttft_slo, itl_slo_ms=t))
+        except ValueError as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"{t:>10.1f} {r.goodput_qps:>12.2f} {r.goodput_fraction * 100:>9.1f}% "
+              f"{r.num_goodput_ok:>7} {r.num_slo_fail_itl:>9} {r.num_slo_fail_ttft:>10}")
+    print()
+    print(f"Denominator: {r.denominator} (completed + failed + backpressure-dropped)")
+    print("ITL is checked at EVERY chunk, so this is a max over ~completion_tokens-1")
+    print("intervals — the threshold belongs near the tail of your ITL distribution.")
 
 
 def _cmd_calibrate_tier_b(args: argparse.Namespace) -> None:

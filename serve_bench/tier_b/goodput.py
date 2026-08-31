@@ -57,6 +57,10 @@ class GoodputConfig:
     ttft_slo_ms: float
     # Explicit ITL ceiling. When None the threshold is derived from the Tier A baseline.
     itl_slo_ms: float | None = None
+    # Applied to Tier A's pooled p99 ITL. Note the threshold's sensitivity to response
+    # length: the check is a maximum over (completion_tokens - 1) intervals, so the same
+    # engine faces a harder test as max_tokens grows. Treat this as a product decision
+    # ("no token gap longer than X") and set it deliberately rather than inheriting it.
     itl_baseline_multiple: float = 2.0
     # TPOT excludes itl[0] because that interval carries the tail of prefill scheduling
     # and would inflate a steady-state throughput proxy. Smooth goodput asks a different
@@ -126,7 +130,7 @@ def resolve_slo(config: GoodputConfig, baseline_itl_ms: float | None) -> SLO:
     if baseline_itl_ms is None:
         raise ValueError(
             "No ITL SLO available. Either set itl_slo_ms in the config, or pass a Tier A "
-            "result to derive the baseline from (its pooled median ITL x "
+            "result to derive the baseline from (its pooled p99 ITL x "
             f"{config.itl_baseline_multiple})."
         )
     if config.itl_baseline_multiple <= 0:
@@ -136,7 +140,7 @@ def resolve_slo(config: GoodputConfig, baseline_itl_ms: float | None) -> SLO:
     return SLO(
         config.ttft_slo_ms,
         threshold,
-        f"tier_a_median_itl_{baseline_itl_ms:.3f}ms_x{config.itl_baseline_multiple}",
+        f"tier_a_p99_itl_{baseline_itl_ms:.3f}ms_x{config.itl_baseline_multiple}",
     )
 
 

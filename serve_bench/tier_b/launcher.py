@@ -220,6 +220,21 @@ class TierBLoadResult:
                     ),
                 },
                 "latency": {"ttft": _s(self.ttft), "tpot": _s(self.tpot), "e2e": _s(self.e2e)},
+                # Per-request detail, successes only. Kept so a run can be re-scored at a
+                # different SLO without paying for GPU time again — the ITL threshold is
+                # a tuning knob, and re-running to move it is the expensive way to do it.
+                "per_request": [
+                    {
+                        "ttft_ms": m.ttft * 1000,
+                        "tpot_ms": m.tpot * 1000 if m.tpot is not None else None,
+                        "e2e_ms": m.e2e * 1000,
+                        "itl_ms": [v * 1000 for v in m.itl],
+                        "prompt_tokens": m.prompt_tokens,
+                        "completion_tokens": m.completion_tokens,
+                        "token_count_warning": m.token_count_warning,
+                    }
+                    for m in self.metrics
+                ],
             },
             indent=2,
         )

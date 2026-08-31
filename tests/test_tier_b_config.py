@@ -41,18 +41,21 @@ def test_example_config_parses_and_derives_a_cap():
 
 # --- Tier A baseline lookup -------------------------------------------------
 
-def _tier_a_doc(itl_p50: float | None) -> dict:
+def _tier_a_doc(itl_p99: float | None) -> dict:
     agg: dict = {"count": 20}
-    if itl_p50 is not None:
-        agg["itl"] = {"p50_ms": itl_p50, "p90_ms": itl_p50, "p95_ms": itl_p50,
-                      "p99_ms": itl_p50, "mean_ms": itl_p50, "min_ms": 0.0, "max_ms": itl_p50}
+    if itl_p99 is not None:
+        # Deliberately distinct values so a p50/p99 mix-up cannot pass.
+        agg["itl"] = {"p50_ms": 24.8, "p90_ms": 34.4, "p95_ms": 37.3,
+                      "p99_ms": itl_p99, "mean_ms": 26.0, "min_ms": 16.6, "max_ms": 55.2}
     return {"run_at": "x", "aggregate": agg}
 
 
-def test_baseline_is_read_from_pooled_itl_p50(tmp_path):
+def test_baseline_is_read_from_the_itl_TAIL_not_the_median(tmp_path):
+    """Smooth goodput tests the MAX interval across a response, so the threshold has to
+    come from the tail. A median-derived threshold scored 1/392 on the first real run."""
     p = tmp_path / "a.json"
-    p.write_text(json.dumps(_tier_a_doc(12.5)))
-    assert baseline_itl_ms_from_tier_a(p) == pytest.approx(12.5)
+    p.write_text(json.dumps(_tier_a_doc(43.6)))
+    assert baseline_itl_ms_from_tier_a(p) == pytest.approx(43.6)
 
 
 def test_missing_itl_summary_returns_none_rather_than_raising(tmp_path):
